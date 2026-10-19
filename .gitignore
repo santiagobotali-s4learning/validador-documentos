@@ -1,0 +1,14 @@
+# Entorno y cachés
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Configuración local
+.env
+.claude/settings.local.json
+
+# Documentos reales de alumnos (datos personales): no subir
+ejemplosCURP/
+ejemplosCERTIFICADOS/

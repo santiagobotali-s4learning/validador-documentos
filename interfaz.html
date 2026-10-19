@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Validador de documentos</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #fff; --text: #1d2330; --muted: #667085; --line: #e3e6ec;
+    --ok: #137a3a; --ok-bg: #e6f4ea; --warn: #8a5a00; --warn-bg: #fff4d6; --bad: #b42318; --bad-bg: #fde8e6;
+    --accent: #2455d6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12151c; --card: #1b2029; --text: #e8ebf2; --muted: #98a2b3; --line: #2b3240;
+      --ok: #6fd18f; --ok-bg: #12301f; --warn: #f1c35a; --warn-bg: #3a2f10; --bad: #ff8b80; --bad-bg: #3d1a17;
+      --accent: #7ea2ff;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, sans-serif; }
+  main { max-width: 980px; margin: 0 auto; padding: 24px 16px 64px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 20px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+  form { display: grid; gap: 12px; grid-template-columns: 1fr 1fr auto; align-items: end; }
+  label { display: grid; gap: 4px; font-size: 13px; color: var(--muted); }
+  input, select, button { font: inherit; padding: 9px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--text); }
+  button { background: var(--accent); color: #fff; border: 0; cursor: pointer; font-weight: 600; }
+  button:disabled { opacity: .6; cursor: wait; }
+  .grid { display: grid; gap: 16px; grid-template-columns: 1fr 1fr; }
+  .badge { display: inline-block; padding: 4px 12px; border-radius: 999px; font-weight: 700; text-transform: uppercase; font-size: 13px; letter-spacing: .04em; }
+  .aceptado { background: var(--ok-bg); color: var(--ok); }
+  .revisar { background: var(--warn-bg); color: var(--warn); }
+  .rechazado { background: var(--bad-bg); color: var(--bad); }
+  h2 { font-size: 14px; margin: 0 0 8px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+  ul { margin: 0; padding-left: 18px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  td, th { text-align: left; padding: 6px 8px; border-top: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 500; border-top: 0; }
+  .si { color: var(--ok); font-weight: 700; } .no { color: var(--bad); font-weight: 700; }
+  .tag { font-size: 11px; color: var(--muted); border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; }
+  pre { margin: 0; overflow: auto; font-size: 12px; max-height: 360px; }
+  iframe, embed, img.preview { width: 100%; height: 520px; border: 1px solid var(--line); border-radius: 8px; background: #fff; object-fit: contain; }
+  .err { color: var(--bad); }
+  a { color: var(--accent); }
+  #salida { display: none; }
+  @media (max-width: 720px) { form, .grid { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>Validador de formato de documentos</h1>
+  <p class="sub">Prueba manual del endpoint <code>/validar</code>. <span id="modo"></span></p>
+
+  <form class="card" id="form">
+    <label>Archivo (PDF, PNG o JPG)
+      <input type="file" id="file" accept="application/pdf,image/png,image/jpeg" required>
+    </label>
+    <label>Tipo esperado
+      <select id="tipo"><option value="">Detectar automáticamente</option></select>
+    </label>
+    <button id="enviar" type="submit">Validar</button>
+  </form>
+
+  <div id="estado" class="sub"></div>
+
+  <div id="salida">
+    <div class="card">
+      <span id="resultado" class="badge"></span>
+      <span id="meta" class="sub" style="margin-left:8px"></span>
+      <ul id="motivos" style="margin-top:12px"></ul>
+      <div id="composicion" class="sub" style="margin:8px 0 0"></div>
+    </div>
+    <div class="grid">
+      <div class="card"><h2>Documento</h2><div id="vista"></div></div>
+      <div>
+        <div class="card"><h2>Campos extraídos</h2><table id="campos"></table></div>
+        <div class="card"><h2>Captura</h2><table id="captura"></table></div>
+      </div>
+    </div>
+    <div class="card"><h2>Código QR</h2><div id="qr"></div></div>
+    <div class="card"><h2>Checks</h2><table id="checks"></table></div>
+    <details class="card"><summary>Respuesta JSON completa</summary><pre id="json"></pre></details>
+  </div>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "—").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const filas = (obj) => Object.entries(obj).map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc(typeof v === "object" && v !== null ? JSON.stringify(v) : v)}</td></tr>`).join("");
+let urlVista = null;
+
+fetch("tipos").then((r) => r.json()).then((t) => {
+  for (const [k, v] of Object.entries(t)) {
+    $("tipo").add(new Option(v.nombre + (v.provisorio ? " (provisorio)" : ""), k));
+  }
+});
+fetch("health").then((r) => r.json()).then((h) => { $("modo").textContent = `Modelo: ${h.modelo} (${h.modo}).`; }).catch(() => {});
+
+$("form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const archivo = $("file").files[0];
+  if (!archivo) return;
+  const datos = new FormData();
+  datos.append("file", archivo);
+  if ($("tipo").value) datos.append("tipo", $("tipo").value);
+
+  $("enviar").disabled = true;
+  $("salida").style.display = "none";
+  $("estado").className = "sub";
+  $("estado").textContent = "Analizando… puede tardar unos segundos.";
+  const t0 = performance.now();
+  try {
+    const resp = await fetch("validar", { method: "POST", body: datos });
+    const cuerpo = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(`${resp.status}: ${cuerpo.detail || "error"}`);
+    mostrar(cuerpo, archivo, ((performance.now() - t0) / 1000).toFixed(1));
+    $("estado").textContent = "";
+  } catch (err) {
+    $("estado").className = "sub err";
+    $("estado").textContent = "Error: " + err.message;
+  } finally {
+    $("enviar").disabled = false;
+  }
+});
+
+function mostrar(d, archivo, seg) {
+  $("resultado").textContent = d.resultado;
+  $("resultado").className = "badge " + d.resultado;
+  $("meta").textContent = `${d.tipo}${d.variante ? " · " + d.variante : ""} · ${seg}s`;
+  $("motivos").innerHTML = (d.motivos || []).map((m) => `<li>${esc(m)}</li>`).join("") || "<li>Sin observaciones.</li>";
+  // PDF de varias páginas: qué documento se identificó en cada una y cuáles se analizaron
+  const analizadas = new Set(d.paginas_analizadas || []);
+  $("composicion").innerHTML = d.composicion
+    ? "Páginas del archivo: " + d.composicion.map((p) =>
+        `<span class="${analizadas.has(p.pagina) ? "si" : "no"}">${p.pagina} · ${esc(p.descripcion)}</span> <span class="tag">${esc(p.fuente)}</span>`).join(" &nbsp; ")
+    : "";
+  $("campos").innerHTML = filas({ ...(d.campos || {}), ...(d.campo_clave?.validacion ? { "validación CURP": d.campo_clave.validacion.valida ? "válida" : d.campo_clave.validacion.errores.join("; ") } : {}) });
+  $("captura").innerHTML = filas({ ...(d.captura || {}), "QR detectados": d.qr?.detectados });
+  const qrs = d.qr?.detalle || [];
+  $("qr").innerHTML = qrs.length ? qrs.map((q) => `
+    <div style="margin-bottom:12px">
+      ${q.es_url ? `<div><strong>${esc(q.dominio)}</strong> ${q.dominio_oficial === true ? '<span class="si">· dominio oficial</span>' : q.dominio_oficial === false ? '<span class="no">· dominio no reconocido</span>' : ""}</div>
+        <div class="sub" style="margin:0">${esc(q.ruta)}</div>
+        ${Object.keys(q.parametros).length ? `<table>${filas(q.parametros)}</table>` : ""}` : ""}
+      ${q.es_url
+        ? `<div style="margin-top:6px;word-break:break-all"><a href="${esc(q.contenido)}" target="_blank" rel="noopener noreferrer">${esc(q.contenido)}</a></div>
+           <div class="sub" style="margin:4px 0 0;font-size:12px">Abre el sitio del enlace del QR en otra pestaña. Es contenido del documento subido: en uno falso puede apuntar a un sitio ajeno.</div>`
+        : `${q.datos ? `<table>${filas(q.datos)}</table>` : ""}<pre style="max-height:none;white-space:pre-wrap;word-break:break-all;margin-top:6px">${esc(q.contenido)}</pre>`}
+    </div>`).join("")
+    : `<span class="${d.qr?.detectados ? "no" : ""}">${d.qr?.detectados ? "Se detectó un QR pero no se pudo leer su contenido." : "No se detectó ningún QR."}</span>`;
+  if (d.qr?.enlace_impreso) {
+    $("qr").innerHTML += `<div style="margin-top:8px;word-break:break-all"><div class="sub" style="margin:0">Enlace impreso en el documento</div>
+      <a href="${esc(d.qr.enlace_impreso)}" target="_blank" rel="noopener noreferrer">${esc(d.qr.enlace_impreso)}</a></div>`;
+  }
+  $("checks").innerHTML = "<tr><th>Check</th><th>Nivel</th><th>Presente</th><th>Fuente</th><th>Evidencia</th></tr>" +
+    Object.entries(d.checks || {}).map(([k, c]) =>
+      `<tr><td>${esc(k)}</td><td>${esc(c.nivel)}</td><td class="${c.presente ? "si" : "no"}">${c.presente ? "sí" : "no"}</td><td><span class="tag">${esc(c.fuente)}</span></td><td>${esc(c.evidencia)}</td></tr>`).join("");
+  $("json").textContent = JSON.stringify(d, null, 2);
+
+  if (urlVista) URL.revokeObjectURL(urlVista);
+  urlVista = URL.createObjectURL(archivo);
+  $("vista").innerHTML = archivo.type === "application/pdf"
+    ? `<embed src="${urlVista}" type="application/pdf">`
+    : `<img class="preview" src="${urlVista}" alt="Documento subido">`;
+  $("salida").style.display = "block";
+}
+</script>
+</body>
+</html>
