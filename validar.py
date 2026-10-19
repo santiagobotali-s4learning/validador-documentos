@@ -7,10 +7,12 @@ from fastapi.responses import FileResponse
 import captura
 import composicion
 import motor_gemini
+import movil
 from config_documentos import DOCUMENTOS
 from decision import evaluar
 
 app = FastAPI(title="Validación de formato de documentos (Gemini)")
+app.include_router(movil.router)  # foto del certificado con el celular
 
 TIPOS_PERMITIDOS = {"application/pdf", "image/png", "image/jpeg"}
 MAX_BYTES = 20 * 1024 * 1024

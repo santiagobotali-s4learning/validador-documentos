@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Foto del certificado</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #fff; --text: #1d2330; --muted: #667085; --line: #e3e6ec;
+    --ok: #137a3a; --ok-bg: #e6f4ea; --bad: #b42318; --accent: #2455d6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12151c; --card: #1b2029; --text: #e8ebf2; --muted: #98a2b3; --line: #2b3240;
+      --ok: #6fd18f; --ok-bg: #12301f; --bad: #ff8b80; --accent: #7ea2ff;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.5 system-ui, sans-serif; }
+  main { max-width: 520px; margin: 0 auto; padding: 20px 16px 48px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 16px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+  .boton { display: block; width: 100%; text-align: center; font: inherit; font-weight: 600; padding: 14px; border-radius: 10px;
+           border: 0; background: var(--accent); color: #fff; cursor: pointer; margin-bottom: 10px; }
+  .boton.secundario { background: transparent; color: var(--accent); border: 1px solid var(--line); }
+  .boton:disabled { opacity: .6; cursor: wait; }
+  input[type=file] { display: none; }
+  #fotos { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .foto { position: relative; aspect-ratio: 3 / 4; border-radius: 8px; overflow: hidden; border: 1px solid var(--line); background: var(--bg); }
+  .foto img { width: 100%; height: 100%; object-fit: cover; }
+  .foto span { position: absolute; left: 6px; top: 4px; font-size: 12px; font-weight: 700; color: #fff; text-shadow: 0 0 3px #000; }
+  .foto button { position: absolute; right: 4px; top: 4px; width: 30px; height: 30px; border-radius: 50%; border: 0;
+                 background: rgba(0,0,0,.6); color: #fff; font-size: 18px; line-height: 1; cursor: pointer; }
+  .err { color: var(--bad); }
+  .listo { background: var(--ok-bg); color: var(--ok); font-weight: 600; text-align: center; padding: 24px 16px; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Foto del certificado</h1>
+  <p class="sub">Sacá una foto por hoja, con buena luz y el documento entero a la vista. Si trae la carta de la Secretaría, sacale foto también.</p>
+
+  <div id="captura">
+    <label class="boton" for="camara">Sacar foto</label>
+    <label class="boton secundario" for="galeria">Elegir de la galería</label>
+    <input type="file" id="camara" accept="image/*" capture="environment">
+    <input type="file" id="galeria" accept="image/*" multiple>
+
+    <div class="card" id="lista" hidden>
+      <div id="fotos"></div>
+      <p class="sub" id="cuenta" style="margin:10px 0 0"></p>
+    </div>
+    <button class="boton" id="enviar" hidden>Enviar</button>
+  </div>
+
+  <p id="estado" class="sub"></p>
+  <div class="card listo" id="fin" hidden>Listo. Volvé a la computadora: el certificado ya se está cargando.</div>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const base = location.pathname.replace(/\/$/, "");  // .../movil/{id}
+const LADO_MAX = 2400;
+let maxFotos = 10;
+const fotos = [];  // { blob, url }
+
+function cerrar(mensaje, esError) {
+  $("captura").hidden = true;
+  $("estado").className = esError ? "sub err" : "sub";
+  $("estado").textContent = mensaje;
+}
+
+fetch(base + "/estado").then(async (r) => {
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) return cerrar(d.detail || "Este enlace no es válido. Generá un QR nuevo desde la computadora.", true);
+  if (d.estado !== "pendiente") return cerrar("Las fotos de esta sesión ya se enviaron.", false);
+  maxFotos = d.max_fotos;
+}).catch(() => cerrar("No hay conexión. Revisá la red y volvé a escanear el QR.", true));
+
+// Achica la foto antes de subirla: sube rápido con datos móviles y no pasa el límite.
+async function achicar(archivo) {
+  const img = await createImageBitmap(archivo);
+  const escala = Math.min(1, LADO_MAX / Math.max(img.width, img.height));
+  const lienzo = document.createElement("canvas");
+  lienzo.width = Math.round(img.width * escala);
+  lienzo.height = Math.round(img.height * escala);
+  lienzo.getContext("2d").drawImage(img, 0, 0, lienzo.width, lienzo.height);
+  return new Promise((ok, mal) => lienzo.toBlob((b) => (b ? ok(b) : mal(new Error("sin imagen"))), "image/jpeg", 0.85));
+}
+
+async function agregar(e) {
+  const nuevos = [...e.target.files];
+  e.target.value = "";
+  $("estado").className = "sub";
+  for (const archivo of nuevos) {
+    if (fotos.length >= maxFotos) {
+      $("estado").textContent = `Máximo ${maxFotos} fotos.`;
+      break;
+    }
+    try {
+      const blob = await achicar(archivo);
+      fotos.push({ blob, url: URL.createObjectURL(blob) });
+    } catch {
+      $("estado").className = "sub err";
+      $("estado").textContent = "No se pudo leer una de las fotos. Probá sacarla de nuevo.";
+    }
+  }
+  dibujar();
+}
+$("camara").addEventListener("change", agregar);
+$("galeria").addEventListener("change", agregar);
+
+function dibujar() {
+  $("fotos").innerHTML = "";
+  fotos.forEach((f, i) => {
+    const celda = document.createElement("div");
+    celda.className = "foto";
+    celda.innerHTML = `<img src="${f.url}" alt="Hoja ${i + 1}"><span>${i + 1}</span><button type="button" aria-label="Quitar la hoja ${i + 1}">×</button>`;
+    celda.querySelector("button").onclick = () => { URL.revokeObjectURL(f.url); fotos.splice(i, 1); dibujar(); };
+    $("fotos").append(celda);
+  });
+  $("lista").hidden = $("enviar").hidden = fotos.length === 0;
+  $("cuenta").textContent = fotos.length === 1 ? "1 hoja. Si el certificado tiene más, sacá otra foto." : `${fotos.length} hojas.`;
+  $("enviar").textContent = fotos.length === 1 ? "Enviar 1 foto" : `Enviar ${fotos.length} fotos`;
+}
+
+$("enviar").addEventListener("click", async () => {
+  const datos = new FormData();
+  fotos.forEach((f, i) => datos.append("files", f.blob, `hoja-${i + 1}.jpg`));
+  $("enviar").disabled = true;
+  $("estado").className = "sub";
+  $("estado").textContent = "Enviando…";
+  try {
+    const r = await fetch(base + "/fotos", { method: "POST", body: datos });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.detail || `error ${r.status}`);
+    $("captura").hidden = true;
+    $("estado").textContent = "";
+    $("fin").hidden = false;
+  } catch (err) {
+    $("estado").className = "sub err";
+    $("estado").textContent = "No se pudo enviar: " + err.message;
+    $("enviar").disabled = false;
+  }
+});
+</script>
+</body>
+</html>

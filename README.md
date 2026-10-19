@@ -13,6 +13,13 @@ Documentos: `curp` (constancia digital) y `certificado_bachillerato` (**criterio
 
 Qué exige cada formato: `config_documentos.py` (niveles critico / importante / opcional).
 
+## Foto del certificado con el celular (`movil.py`)
+Solo para el certificado (la CURP exige el PDF digital). La computadora crea una sesión (`POST /movil/sesiones`)
+y muestra un QR a `/movil/{id}`; el celular saca una foto por hoja y las sube; se juntan en un PDF (una página
+por foto) que la computadora baja una sola vez y manda a `/validar` como un archivo local. La sesión vence a los 15 min.
+Las sesiones se guardan en el bucket `MOVIL_BUCKET` (en Cloud Run, compartido entre instancias) o, sin esa
+variable, en una carpeta temporal local. El celular pasa por IAP: hay que iniciar sesión con una cuenta autorizada.
+
 ## Correr en local
     $env:GCP_PROJECT="validador-documentos-api"      # o GEMINI_API_KEY
     .\.venv\Scripts\uvicorn validar:app --port 8080  # docs en /docs

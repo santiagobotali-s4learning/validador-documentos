@@ -45,8 +45,13 @@
   .err { color: var(--bad); }
   a { color: var(--accent); }
   #salida { display: none; }
-  @media (max-width: 720px) { form, .grid { grid-template-columns: 1fr; } }
+  button.secundario { background: transparent; color: var(--accent); border: 1px solid var(--line); }
+  .celular-qr { display: flex; gap: 16px; align-items: center; }
+  #qr-codigo { background: #fff; padding: 10px; border-radius: 8px; line-height: 0; flex: none; }
+  [hidden] { display: none !important; }
+  @media (max-width: 720px) { form, .grid { grid-template-columns: 1fr; } .celular-qr { flex-direction: column; align-items: flex-start; } }
 </style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 </head>
 <body>
 <main>
@@ -62,6 +67,24 @@
     </label>
     <button id="enviar" type="submit">Validar</button>
   </form>
+
+  <!-- Solo para el certificado: la CURP exige el PDF digital original -->
+  <div class="card" id="celular" hidden>
+    <div id="celular-ofrecer">
+      <span class="sub">¿No tenés el certificado en la computadora?</span>
+      <button type="button" id="celular-iniciar" style="margin-left:8px">Sacar foto con el celular</button>
+    </div>
+    <div id="celular-qr" class="celular-qr" hidden>
+      <div id="qr-codigo"></div>
+      <div>
+        <strong>Escaneá el código con el celular</strong>
+        <p class="sub" style="margin:4px 0 8px">Se abre una página para sacar una foto por hoja. Si te pide iniciar sesión, usá tu
+          cuenta de prueba. Cuando las envíes, el certificado se carga acá solo.</p>
+        <p class="sub" id="celular-estado" style="margin:0 0 8px"></p>
+        <button type="button" id="celular-cancelar" class="secundario">Cancelar</button>
+      </div>
+    </div>
+  </div>
 
   <div id="estado" class="sub"></div>
 
@@ -124,6 +147,76 @@ $("form").addEventListener("submit", async (e) => {
     $("enviar").disabled = false;
   }
 });
+
+// --- Foto del certificado con el celular (ver movil.py) ---
+const CERTIFICADO = "certificado_bachillerato";
+let sondeo = null;
+
+$("tipo").addEventListener("change", () => {
+  $("celular").hidden = $("tipo").value !== CERTIFICADO;
+  if ($("celular").hidden) cancelarCelular();
+});
+
+$("celular-iniciar").addEventListener("click", async () => {
+  try {
+    const r = await fetch("movil/sesiones", { method: "POST" });
+    if (!r.ok) throw new Error(`error ${r.status}`);
+    const s = await r.json();
+    const url = new URL(s.url, location.href).href;
+    $("qr-codigo").innerHTML = "";
+    new QRCode($("qr-codigo"), { text: url, width: 180, height: 180, correctLevel: QRCode.CorrectLevel.M });
+    $("celular-ofrecer").hidden = true;
+    $("celular-qr").hidden = false;
+    $("celular-estado").className = "sub";
+    $("celular-estado").textContent = ["localhost", "127.0.0.1"].includes(location.hostname)
+      ? "Estás en localhost: el celular no puede abrir esta dirección. Abrí esta página con la IP de la PC (misma red Wi-Fi)."
+      : "Esperando las fotos…";
+    sondeo = setInterval(() => consultarCelular(s.id), 2000);
+  } catch (err) {
+    $("celular-estado").textContent = "";
+    $("estado").className = "sub err";
+    $("estado").textContent = "No se pudo generar el QR: " + err.message;
+  }
+});
+
+$("celular-cancelar").addEventListener("click", cancelarCelular);
+
+function cancelarCelular() {
+  clearInterval(sondeo);
+  sondeo = null;
+  $("celular-qr").hidden = true;
+  $("celular-ofrecer").hidden = false;
+}
+
+async function consultarCelular(id) {
+  const r = await fetch(`movil/${id}/estado`).catch(() => null);
+  if (!r || !sondeo) return;  // sin red: se reintenta en el próximo ciclo
+  if (!r.ok) {
+    cancelarCelular();
+    $("estado").className = "sub err";
+    $("estado").textContent = r.status === 410 ? "El QR venció. Generá uno nuevo." : "La sesión del celular ya no existe. Generá un QR nuevo.";
+    return;
+  }
+  const d = await r.json();
+  if (d.estado !== "listo") return;
+  clearInterval(sondeo);
+  sondeo = null;
+  $("celular-estado").textContent = `Llegaron ${d.paginas} foto(s). Cargando…`;
+  const doc = await fetch(`movil/${id}/documento`);
+  if (!doc.ok) {
+    cancelarCelular();
+    $("estado").className = "sub err";
+    $("estado").textContent = "No se pudo traer el documento del celular. Generá un QR nuevo.";
+    return;
+  }
+  // Se carga en el selector como si se hubiera elegido en la computadora, y se valida.
+  const archivo = new File([await doc.blob()], "certificado-celular.pdf", { type: "application/pdf" });
+  const dt = new DataTransfer();
+  dt.items.add(archivo);
+  $("file").files = dt.files;
+  cancelarCelular();
+  $("form").requestSubmit();
+}
 
 function mostrar(d, archivo, seg) {
   $("resultado").textContent = d.resultado;
